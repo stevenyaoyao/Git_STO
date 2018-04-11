@@ -194,6 +194,13 @@ Model Main_STOPrj {
                 IndexDomain: (SKU,mon);
                 Range: S_Unit;
             }
+            Parameter P_ForecastRegionRaw {
+                IndexDomain: (re,SKU,mon);
+            }
+            ElementParameter P_ForecastRegionRawUnit {
+                IndexDomain: (re,SKU,mon);
+                Range: S_Unit;
+            }
             ElementParameter P_OrderReportSKU {
                 IndexDomain: od;
                 Range: S_ReportSKU;
@@ -396,7 +403,7 @@ Model Main_STOPrj {
                 empty P_DCServingRegionSKURaw, P_DCServingRegionSKUCategoryRaw;
                 
                 !empty P_TMCountryRaw, P_TMCountryRawUnit, P_TMRegionRaw, P_TMRegionRawUnit, P_ForecastRaw, P_ForecastRawUnit;
-                empty P_TMCountry, P_TMCountryRawUnit, P_TMRegion, P_TMRegionRawUnit, P_ForecastRaw, P_ForecastRawUnit;
+                empty P_TMCountry, P_TMCountryRawUnit, P_TMRegion, P_TMRegionRawUnit, P_ForecastRaw, P_ForecastRawUnit, P_ForecastRegionRaw, P_ForecastRegionRawUnit;
                 empty S_Order, P_OrderRegion;
                 !empty P_OrderReportSKU,
                 empty P_OrderSku, P_OrderDay, P_OrderQuantityRaw, P_OrderQuantityRawUnit;
@@ -569,6 +576,15 @@ Model Main_STOPrj {
                 SpreadSheet::RetrieveTable(Workbook:P_FileName, Parameter:P_ForecastRaw, DataRange:dataRangeStr, RowsRange:rowRangeStr, ColumnsRange:columnRangeStr);
                 
                 P_ForecastRawUnit(SKU, mon) := 'PCS';
+                
+                SpreadSheet::SetActiveSheet(Workbook:P_FileName, Name:"Forecasted Demand Region");
+                numRows := 50000;
+                rowRangeStr := formatString("A2:B%i",numRows);
+                columnRangeStr := formatString("E1:AF1");
+                dataRangeStr := formatString("E2:AF%i", numRows);
+                SpreadSheet::RetrieveTable(Workbook:P_FileName, Parameter:P_ForecastRegionRaw, DataRange:dataRangeStr, RowsRange:rowRangeStr, ColumnsRange:columnRangeStr);
+                
+                P_ForecastRegionRawUnit(re, SKU, mon) := 'PCS';
                 
                 SpreadSheet::SetActiveSheet(Workbook:P_FileName, Name:"History Order");
                 numRows := 200000;
@@ -843,7 +859,7 @@ Model Main_STOPrj {
                 !empty P_OrderSku;
                 empty P_DCServingRegionSKU, P_OrderQuantity;
                 !empty P_TMCountry, P_TMRegion
-                empty P_Forecast;
+                empty P_Forecast, P_ForecastRegion;
                 
                 !empty P_AvailableStock, P_StockPendingChecking, P_StockInTransit;
                 empty P_AvailableStockNew, P_StockPendingCheckingNew, P_StockInTransitNew;
@@ -884,6 +900,7 @@ Model Main_STOPrj {
                 !endfor;
                 
                 P_Forecast(SKU, mon) := P_ForecastRaw(SKU, mon);
+                P_ForecastRegion(re, SKU, mon) := P_ForecastRegionRaw(re, SKU, mon);
                 
                 for(dcsindex) do
                 	P_AvailableStockNew(P_DCDivisionOfDCStock(dcsindex), P_SKUOfDCStock(dcsindex)) :=
@@ -1139,6 +1156,19 @@ Model Main_STOPrj {
     Section PullSection {
         Procedure CalculatePull {
             Body: {
+                empty P_MOMResult, P_YOYResult;
+                
+                P_ISMOM := 1;
+                PullLogicRatioCalculation;
+                PullBothCalculation;
+                
+                P_ISMOM := 0;
+                PullLogicRatioCalculation;
+                PullBothCalculation;
+            }
+        }
+        Procedure CalculatePull_Backup {
+            Body: {
                 empty P_RegionMOMResult, P_RegionYOYResult, P_MOMResult, P_YOYResult;
                 
                 P_ISMOM := 1;
@@ -1274,6 +1304,117 @@ Model Main_STOPrj {
                 endfor;
             }
         }
+        Procedure PullBothCalculation {
+            Body: {
+                for (DC, SKU) do
+                	P_TheDC := DC;
+                	P_TheSKU := SKU;
+                
+                	!Sequence 1
+                	P_TMR(P_TheSKU) := 1;
+                	P_TMC(P_TheSKU) := 0;
+                	P_FR(P_TheSKU) := 0;
+                	P_FC(P_TheSKU) := 0;
+                	PullCases;
+                
+                	!Sequence 2
+                	if ((P_ISMOM = 1 and sum(day, P_MOMResult(P_TheDC, day, P_TheSKU)) = 0)
+                	    or (P_ISMOM = 0 and sum(day, P_YOYResult(P_TheDC, day, P_TheSKU)) = 0)) then
+                		P_TMR(P_TheSKU) := 0;
+                		P_TMC(P_TheSKU) := 1;
+                		P_FR(P_TheSKU) := 0;
+                		P_FC(P_TheSKU) := 0;
+                		PullCases;
+                	endif;
+                
+                	!Sequence 3
+                	if ((P_ISMOM = 1 and sum(day, P_MOMResult(P_TheDC, day, P_TheSKU)) = 0)
+                	    or (P_ISMOM = 0 and sum(day, P_YOYResult(P_TheDC, day, P_TheSKU)) = 0)) then
+                		P_TMR(P_TheSKU) := 0;
+                		P_TMC(P_TheSKU) := 0;
+                		P_FR(P_TheSKU) := 1;
+                		P_FC(P_TheSKU) := 0;
+                		PullCases;
+                	endif;	
+                
+                	!Sequence 4
+                	if ((P_ISMOM = 1 and sum(day, P_MOMResult(P_TheDC, day, P_TheSKU)) = 0)
+                	    or (P_ISMOM = 0 and sum(day, P_YOYResult(P_TheDC, day, P_TheSKU)) = 0)) then
+                		P_TMR(P_TheSKU) := 0;
+                		P_TMC(P_TheSKU) := 0;
+                		P_FR(P_TheSKU) := 0;
+                		P_FC(P_TheSKU) := 1;
+                		PullCases;
+                	endif;
+                endfor;
+            }
+        }
+        Procedure PullCases {
+            Body: {
+                empty P_UseRegion;
+                
+                if (P_TMR(P_TheSKU)) then
+                	P_UseRegion := 1;
+                	P_Region(re, P_TheSKU, P_DayToMonth(day)) := P_TMRegion(re, P_TheSKU, P_DayToMonth(day));
+                elseif (P_TMC(P_TheSKU)) then
+                	P_UseRegion := 0;
+                	P_Country(P_TheSKU, P_DayToMonth(day)) := P_TMCountry(P_TheSKU, P_DayToMonth(day));	
+                elseif (P_FR(P_TheSKU)) then
+                	P_UseRegion := 1;
+                	P_Region(re, P_TheSKU, P_DayToMonth(day)) := P_ForecastRegion(re, P_TheSKU, P_DayToMonth(day));
+                elseif (P_FC(P_TheSKU)) then
+                	P_UseRegion := 0;
+                	P_Country(P_TheSKU, P_DayToMonth(day)) := P_Forecast(P_TheSKU, P_DayToMonth(day));
+                endif;
+                
+                
+                
+                if (P_UseRegion) then
+                	if (P_ISMOM) then
+                		P_RegionOResultRatio(re, day, P_TheSKU) := P_RegionMOMResultRatio(re, day, P_TheSKU);
+                	else
+                		P_RegionOResultRatio(re, day, P_TheSKU) := P_RegionYOYResultRatio(re, day, P_TheSKU);
+                	endif;
+                else
+                	if (P_ISMOM) then
+                		P_OResultRatio(P_TheDC, day, P_TheSKU) := P_MOMResultRatio(P_TheDC, day, P_TheSKU);
+                	else
+                		P_OResultRatio(P_TheDC, day, P_TheSKU) := P_YOYResultRatio(P_TheDC, day, P_TheSKU);
+                	endif;
+                endif;
+                
+                PullCommon;
+            }
+        }
+        Procedure PullCommon {
+            Body: {
+                empty P_RegionOResult, P_OResult;
+                
+                if (P_UseRegion) then
+                	for(day | day >= P_PlanningHorizonStart and day <= P_PlanningHorizonEnd + P_AdditionalDaysToForcast) do
+                    		if(sum(re, P_Region(re, P_TheSKU, P_DayToMonth(day))) > 0) then
+                    			for(re | P_DCServingRegionSKU(re, P_TheSKU) = P_TheDC) do
+                        			P_RegionOResult(re, day, P_TheSKU) := P_Region(re, P_TheSKU, P_DayToMonth(day)) * P_RegionOResultRatio(re, day, P_TheSKU);
+                
+                        			P_OResult(P_TheDC, day, P_TheSKU) := P_OResult(P_TheDC, day, P_TheSKU) + P_RegionOResult(re, day, P_TheSKU);
+                        		endfor;
+                    		endif;
+                	endfor;
+                else
+                	for(day | day >= P_PlanningHorizonStart and day <= P_PlanningHorizonEnd + P_AdditionalDaysToForcast) do
+                		if(P_Country(P_TheSKU, P_DayToMonth(day)) > 0) then
+                       			P_OResult(P_TheDC, day, P_TheSKU) := P_Country(P_TheSKU, P_DayToMonth(day)) * P_OResultRatio(P_TheDC, day, P_TheSKU);
+                       		endif;
+                       	endfor;
+                endif;
+                
+                if (P_ISMOM = 1 and sum(day, P_MOMResult(P_TheDC, day, P_TheSKU)) = 0) then
+                	P_MOMResult(P_TheDC, day, P_TheSKU) := P_OResult(P_TheDC, day, P_TheSKU);
+                elseif (P_ISMOM = 0 and sum(day, P_YOYResult(P_TheDC, day, P_TheSKU) = 0)) then
+                	P_YOYResult(P_TheDC, day, P_TheSKU) := P_OResult(P_TheDC, day, P_TheSKU);
+                endif;
+            }
+        }
         DeclarationSection PullParameterDeclaration {
             Parameter P_AdditionalDaysToForcast;
             ElementParameter P_OrderRegion {
@@ -1297,6 +1438,9 @@ Model Main_STOPrj {
             }
             Parameter P_Forecast {
                 IndexDomain: (SKU,mon);
+            }
+            Parameter P_ForecastRegion {
+                IndexDomain: (re,SKU,mon);
             }
             Parameter P_TMCountry {
                 IndexDomain: (SKU,mon);
@@ -1328,6 +1472,45 @@ Model Main_STOPrj {
             }
             ElementParameter P_EarliestMonthToConsider {
                 Range: Cal_Months;
+            }
+        }
+        DeclarationSection PullParameterCommon {
+            ElementParameter P_TheDC {
+                Range: S_DC;
+            }
+            ElementParameter P_TheSKU {
+                Range: S_SKU;
+            }
+            Parameter P_TMR {
+                IndexDomain: SKU;
+            }
+            Parameter P_TMC {
+                IndexDomain: SKU;
+            }
+            Parameter P_FR {
+                IndexDomain: SKU;
+            }
+            Parameter P_FC {
+                IndexDomain: SKU;
+            }
+            Parameter P_UseRegion;
+            Parameter P_Region {
+                IndexDomain: (re,SKU,mon);
+            }
+            Parameter P_RegionOResultRatio {
+                IndexDomain: (re,day,SKU);
+            }
+            Parameter P_Country {
+                IndexDomain: (SKU,mon);
+            }
+            Parameter P_OResultRatio {
+                IndexDomain: (DC,day,SKU);
+            }
+            Parameter P_RegionOResult {
+                IndexDomain: (re,day,SKU);
+            }
+            Parameter P_OResult {
+                IndexDomain: (DC,day,SKU);
             }
         }
         DeclarationSection PullResultDeclaration {
@@ -1614,7 +1797,10 @@ Model Main_STOPrj {
             }
             Constraint C_PlantCurrentStock {
                 IndexDomain: SKU | P_IsSKUExcluded(SKU) = 0;
-                Definition: sum((DC, w) | (w >= P_PlanningHorizonStartWeek and w <= P_PlanningHorizonEndWeek), V_Replenishment(DC, SKU, w)) <= P_SKUPlantCurrentStock(SKU);
+                Definition: {
+                    sum((DC, w) | (w >= P_PlanningHorizonStartWeek and w <= P_PlanningHorizonStartWeek + 1), V_Replenishment(DC, SKU, w)) <= P_SKUPlantCurrentStock(SKU)
+                    !sum((DC, w) | (w >= P_PlanningHorizonStartWeek and w <= P_PlanningHorizonEndWeek), V_Replenishment(DC, SKU, w)) <= P_SKUPlantCurrentStock(SKU)
+                }
             }
             Constraint C_SAVariableLinkage1 {
                 IndexDomain: (DC, SKU, w) | (w >= P_PlanningHorizonStartWeek and w <= P_PlanningHorizonEndWeek and P_IsSKUExcluded(SKU) = 0);
@@ -2094,6 +2280,7 @@ Model Main_STOPrj {
                 endif;
                 
                 CalculatePull;
+                !CalculatePull_Backup;
                 
                 empty P_Demand;
                 
